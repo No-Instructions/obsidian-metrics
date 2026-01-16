@@ -49,6 +49,7 @@ export default class ObsidianMetricsPlugin extends Plugin {
 
 		// Add status bar item showing server status
 		const statusBarItemEl = this.addStatusBarItem();
+		statusBarItemEl.addClass('obsidian-metrics-status');
 		this.updateStatusBar(statusBarItemEl);
 
 		// Add commands
