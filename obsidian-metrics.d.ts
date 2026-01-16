@@ -1,3 +1,20 @@
+/**
+ * Type declarations for the Obsidian Metrics API
+ *
+ * Copy this file into your plugin to get type-safe access to window.ObsidianMetrics
+ *
+ * @example
+ * const metrics = window.ObsidianMetrics;
+ * if (metrics) {
+ *   const gauge = metrics.createGauge({
+ *     name: 'my_metric',
+ *     help: 'My metric description',
+ *     labelNames: ['document']
+ *   });
+ *   gauge.labels({ document: 'note.md' }).set(42);
+ * }
+ */
+
 export interface MetricLabels {
 	[key: string]: string;
 }
@@ -5,21 +22,18 @@ export interface MetricLabels {
 export interface CounterOptions {
 	name: string;
 	help: string;
-	labels?: string[];
 	labelNames?: string[];
 }
 
 export interface GaugeOptions {
 	name: string;
 	help: string;
-	labels?: string[];
 	labelNames?: string[];
 }
 
 export interface HistogramOptions {
 	name: string;
 	help: string;
-	labels?: string[];
 	labelNames?: string[];
 	buckets?: number[];
 }
@@ -27,23 +41,10 @@ export interface HistogramOptions {
 export interface SummaryOptions {
 	name: string;
 	help: string;
-	labels?: string[];
 	labelNames?: string[];
 	percentiles?: number[];
 	maxAgeSeconds?: number;
 	ageBuckets?: number;
-}
-
-export interface MetricsServerConfig {
-	port: number;
-	path: string;
-	enabled: boolean;
-}
-
-export interface ObsidianMetricsSettings {
-	serverConfig: MetricsServerConfig;
-	enableBuiltInMetrics: boolean;
-	customMetricsPrefix: string;
 }
 
 export interface LabeledMetricInstance {
@@ -63,36 +64,14 @@ export interface MetricInstance {
 	labels(labels: MetricLabels): LabeledMetricInstance;
 }
 
-export interface MetricsRegistry {
+export interface IObsidianMetricsAPI {
+	// Metric retrieval
 	getMetric(name: string): MetricInstance | undefined;
 	getAllMetrics(): Promise<string>;
 	clearMetric(name: string): boolean;
 	clearAllMetrics(): void;
-}
 
-/**
- * The full public API exposed via window.ObsidianMetrics
- * Other plugins can use this interface to type their access to the metrics API
- *
- * @example
- * declare global {
- *   interface Window {
- *     ObsidianMetrics?: IObsidianMetricsAPI;
- *   }
- * }
- *
- * const metrics = window.ObsidianMetrics;
- * if (metrics) {
- *   const gauge = metrics.createGauge({
- *     name: 'my_metric',
- *     help: 'My metric description',
- *     labelNames: ['document']
- *   });
- *   gauge.labels({ document: 'note.md' }).set(42);
- * }
- */
-export interface IObsidianMetricsAPI extends MetricsRegistry {
-	// Metric creation methods
+	// Metric creation
 	createCounter(options: CounterOptions): MetricInstance;
 	createGauge(options: GaugeOptions): MetricInstance;
 	createHistogram(options: HistogramOptions): MetricInstance;
@@ -108,4 +87,10 @@ export interface IObsidianMetricsAPI extends MetricsRegistry {
 	createTimer(metricName: string): () => number;
 	measureAsync<T>(metricName: string, fn: () => Promise<T>): Promise<T>;
 	measureSync<T>(metricName: string, fn: () => T): T;
+}
+
+declare global {
+	interface Window {
+		ObsidianMetrics?: IObsidianMetricsAPI;
+	}
 }

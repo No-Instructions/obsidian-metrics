@@ -1,14 +1,14 @@
 import { MetricsManager } from './metrics-manager';
-import { 
-	CounterOptions, 
-	GaugeOptions, 
-	HistogramOptions, 
+import {
+	CounterOptions,
+	GaugeOptions,
+	HistogramOptions,
 	SummaryOptions,
 	MetricInstance,
-	MetricsRegistry
+	IObsidianMetricsAPI
 } from './types';
 
-export class ObsidianMetricsAPI implements MetricsRegistry {
+export class ObsidianMetricsAPI implements IObsidianMetricsAPI {
 	private metricsManager: MetricsManager;
 
 	constructor(metricsManager: MetricsManager) {

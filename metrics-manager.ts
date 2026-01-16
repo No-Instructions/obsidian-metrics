@@ -1,11 +1,12 @@
 import * as client from 'prom-client';
-import { 
-	CounterOptions, 
-	GaugeOptions, 
-	HistogramOptions, 
+import {
+	CounterOptions,
+	GaugeOptions,
+	HistogramOptions,
 	SummaryOptions,
 	MetricLabels,
 	MetricInstance,
+	LabeledMetricInstance,
 	MetricsRegistry
 } from './types';
 
@@ -49,7 +50,17 @@ export class MetricsManager implements MetricsRegistry {
 			dec: () => { throw new Error('Counter cannot be decremented'); },
 			set: () => { throw new Error('Counter cannot be set'); },
 			observe: () => { throw new Error('Counter does not support observe'); },
-			startTimer: () => { throw new Error('Counter does not support timing'); }
+			startTimer: () => { throw new Error('Counter does not support timing'); },
+			labels: (labels: MetricLabels): LabeledMetricInstance => {
+				const labeled = counter.labels(labels);
+				return {
+					inc: (value?: number) => labeled.inc(value),
+					dec: () => { throw new Error('Counter cannot be decremented'); },
+					set: () => { throw new Error('Counter cannot be set'); },
+					observe: () => { throw new Error('Counter does not support observe'); },
+					startTimer: () => { throw new Error('Counter does not support timing'); }
+				};
+			}
 		};
 	}
 
@@ -92,7 +103,17 @@ export class MetricsManager implements MetricsRegistry {
 				}
 			},
 			observe: () => { throw new Error('Gauge does not support observe'); },
-			startTimer: () => { throw new Error('Gauge does not support timing'); }
+			startTimer: () => { throw new Error('Gauge does not support timing'); },
+			labels: (labels: MetricLabels): LabeledMetricInstance => {
+				const labeled = gauge.labels(labels);
+				return {
+					inc: (value?: number) => labeled.inc(value),
+					dec: (value?: number) => labeled.dec(value),
+					set: (value: number) => labeled.set(value),
+					observe: () => { throw new Error('Gauge does not support observe'); },
+					startTimer: () => { throw new Error('Gauge does not support timing'); }
+				};
+			}
 		};
 	}
 
@@ -130,6 +151,16 @@ export class MetricsManager implements MetricsRegistry {
 				} else {
 					return histogram.startTimer();
 				}
+			},
+			labels: (labels: MetricLabels): LabeledMetricInstance => {
+				const labeled = histogram.labels(labels);
+				return {
+					inc: () => { throw new Error('Histogram does not support inc'); },
+					dec: () => { throw new Error('Histogram does not support dec'); },
+					set: () => { throw new Error('Histogram does not support set'); },
+					observe: (value: number) => labeled.observe(value),
+					startTimer: () => labeled.startTimer()
+				};
 			}
 		};
 	}
@@ -170,6 +201,16 @@ export class MetricsManager implements MetricsRegistry {
 				} else {
 					return summary.startTimer();
 				}
+			},
+			labels: (labels: MetricLabels): LabeledMetricInstance => {
+				const labeled = summary.labels(labels);
+				return {
+					inc: () => { throw new Error('Summary does not support inc'); },
+					dec: () => { throw new Error('Summary does not support dec'); },
+					set: () => { throw new Error('Summary does not support set'); },
+					observe: (value: number) => labeled.observe(value),
+					startTimer: () => labeled.startTimer()
+				};
 			}
 		};
 	}
@@ -177,29 +218,144 @@ export class MetricsManager implements MetricsRegistry {
 	getMetric(name: string): MetricInstance | undefined {
 		const fullName = name.startsWith(this.prefix) ? name : this.prefix + name;
 		const metric = this.metrics.get(fullName);
-		
+
 		if (!metric) {
 			return undefined;
 		}
 
 		// Return a wrapper that provides the MetricInstance interface
 		if (metric instanceof client.Counter) {
+			const counter = metric as client.Counter<string>;
 			return {
 				inc: (value?: number, labels?: MetricLabels) => {
 					if (labels) {
-						(metric as client.Counter<any>).labels(labels).inc(value);
+						counter.labels(labels).inc(value);
 					} else {
-						metric.inc(value);
+						counter.inc(value);
 					}
 				},
 				dec: () => { throw new Error('Counter cannot be decremented'); },
 				set: () => { throw new Error('Counter cannot be set'); },
 				observe: () => { throw new Error('Counter does not support observe'); },
-				startTimer: () => { throw new Error('Counter does not support timing'); }
+				startTimer: () => { throw new Error('Counter does not support timing'); },
+				labels: (labels: MetricLabels): LabeledMetricInstance => {
+					const labeled = counter.labels(labels);
+					return {
+						inc: (value?: number) => labeled.inc(value),
+						dec: () => { throw new Error('Counter cannot be decremented'); },
+						set: () => { throw new Error('Counter cannot be set'); },
+						observe: () => { throw new Error('Counter does not support observe'); },
+						startTimer: () => { throw new Error('Counter does not support timing'); }
+					};
+				}
 			};
 		}
-		
-		// Add other metric type handlers as needed
+
+		if (metric instanceof client.Gauge) {
+			const gauge = metric as client.Gauge<string>;
+			return {
+				inc: (value?: number, labels?: MetricLabels) => {
+					if (labels) {
+						gauge.labels(labels).inc(value);
+					} else {
+						gauge.inc(value);
+					}
+				},
+				dec: (value?: number, labels?: MetricLabels) => {
+					if (labels) {
+						gauge.labels(labels).dec(value);
+					} else {
+						gauge.dec(value);
+					}
+				},
+				set: (value: number, labels?: MetricLabels) => {
+					if (labels) {
+						gauge.labels(labels).set(value);
+					} else {
+						gauge.set(value);
+					}
+				},
+				observe: () => { throw new Error('Gauge does not support observe'); },
+				startTimer: () => { throw new Error('Gauge does not support timing'); },
+				labels: (labels: MetricLabels): LabeledMetricInstance => {
+					const labeled = gauge.labels(labels);
+					return {
+						inc: (value?: number) => labeled.inc(value),
+						dec: (value?: number) => labeled.dec(value),
+						set: (value: number) => labeled.set(value),
+						observe: () => { throw new Error('Gauge does not support observe'); },
+						startTimer: () => { throw new Error('Gauge does not support timing'); }
+					};
+				}
+			};
+		}
+
+		if (metric instanceof client.Histogram) {
+			const histogram = metric as client.Histogram<string>;
+			return {
+				inc: () => { throw new Error('Histogram does not support inc'); },
+				dec: () => { throw new Error('Histogram does not support dec'); },
+				set: () => { throw new Error('Histogram does not support set'); },
+				observe: (value: number, labels?: MetricLabels) => {
+					if (labels) {
+						histogram.labels(labels).observe(value);
+					} else {
+						histogram.observe(value);
+					}
+				},
+				startTimer: (labels?: MetricLabels) => {
+					if (labels) {
+						return histogram.labels(labels).startTimer();
+					} else {
+						return histogram.startTimer();
+					}
+				},
+				labels: (labels: MetricLabels): LabeledMetricInstance => {
+					const labeled = histogram.labels(labels);
+					return {
+						inc: () => { throw new Error('Histogram does not support inc'); },
+						dec: () => { throw new Error('Histogram does not support dec'); },
+						set: () => { throw new Error('Histogram does not support set'); },
+						observe: (value: number) => labeled.observe(value),
+						startTimer: () => labeled.startTimer()
+					};
+				}
+			};
+		}
+
+		if (metric instanceof client.Summary) {
+			const summary = metric as client.Summary<string>;
+			return {
+				inc: () => { throw new Error('Summary does not support inc'); },
+				dec: () => { throw new Error('Summary does not support dec'); },
+				set: () => { throw new Error('Summary does not support set'); },
+				observe: (value: number, labels?: MetricLabels) => {
+					if (labels) {
+						summary.labels(labels).observe(value);
+					} else {
+						summary.observe(value);
+					}
+				},
+				startTimer: (labels?: MetricLabels) => {
+					if (labels) {
+						return summary.labels(labels).startTimer();
+					} else {
+						return summary.startTimer();
+					}
+				},
+				labels: (labels: MetricLabels): LabeledMetricInstance => {
+					const labeled = summary.labels(labels);
+					return {
+						inc: () => { throw new Error('Summary does not support inc'); },
+						dec: () => { throw new Error('Summary does not support dec'); },
+						set: () => { throw new Error('Summary does not support set'); },
+						observe: (value: number) => labeled.observe(value),
+						startTimer: () => labeled.startTimer()
+					};
+				}
+			};
+		}
+
 		return undefined;
 	}
 
