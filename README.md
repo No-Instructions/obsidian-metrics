@@ -8,9 +8,9 @@ An Obsidian plugin that runs a Prometheus server and provides a public TypeScrip
 - **TypeScript API**: Full-featured API for creating and managing metrics
 - **Multiple Metric Types**: Support for Counters, Gauges, Histograms, and Summaries
 - **Built-in Metrics**: Automatic collection of system and plugin metrics
+- **Default Labels**: All metrics automatically include `vault_name` and `vault_id` labels
+- **Plugin Integration**: Event-based API for other plugins with proper load order handling
 - **Settings Interface**: Configurable server settings and metric options
-- **Global API Access**: Available to other plugins through `window.ObsidianMetrics`
-- **Health Monitoring**: Built-in health check endpoint
 
 ## Installation
 
@@ -19,28 +19,17 @@ An Obsidian plugin that runs a Prometheus server and provides a public TypeScrip
 1. Clone this repository into your `.obsidian/plugins/` folder:
    ```bash
    cd /path/to/your/vault/.obsidian/plugins/
-   git clone https://github.com/yourusername/obsidian-metrics-plugin.git
+   git clone https://github.com/yourusername/obsidian-metrics.git
    ```
 
-2. Install dependencies:
+2. Install dependencies and build:
    ```bash
-   cd obsidian-metrics-plugin
+   cd obsidian-metrics
    npm install
-   ```
-
-3. Build the plugin:
-   ```bash
    npm run build
    ```
 
-4. Enable the plugin in Obsidian Settings → Community Plugins
-
-### Development
-
-1. Clone the repository
-2. Run `npm install`
-3. Run `npm run dev` for development with auto-rebuild
-4. Reload Obsidian to see changes
+3. Enable the plugin in Obsidian Settings -> Community Plugins
 
 ## Usage
 
@@ -52,54 +41,104 @@ Once installed, the plugin will:
 - Add a status indicator to the status bar
 - Provide a ribbon icon for quick access
 
-### API Usage
+### API for Other Plugins
+
+#### Type Definitions
+
+Copy `obsidian-metrics.d.ts` into your plugin for type-safe API access. This file contains:
+- All interface definitions (`IObsidianMetricsAPI`, `MetricInstance`, etc.)
+- Module augmentation for the `obsidian-metrics:ready` workspace event
+- Comprehensive usage documentation
 
 #### Accessing the API
 
 ```typescript
-// From another plugin
-const metricsAPI = (window as any).ObsidianMetrics;
+import { IObsidianMetricsAPI, MetricInstance, ObsidianMetricsPlugin } from './obsidian-metrics';
 
-// Or get the plugin instance directly
-const plugin = this.app.plugins.plugins['obsidian-metrics-plugin'];
-const metricsAPI = plugin.getMetricsAPI();
+class MyPlugin extends Plugin {
+  private metricsApi: IObsidianMetricsAPI | undefined;
+  private myGauge: MetricInstance | undefined;
+
+  async onload() {
+    // Listen for metrics API becoming available (handles load order and reloads)
+    this.registerEvent(
+      this.app.workspace.on('obsidian-metrics:ready', (api: IObsidianMetricsAPI) => {
+        this.initializeMetrics(api);
+      })
+    );
+
+    // Also try to get it immediately in case metrics plugin loaded first
+    const metricsPlugin = this.app.plugins.plugins['obsidian-metrics'] as ObsidianMetricsPlugin | undefined;
+    if (metricsPlugin?.api) {
+      this.initializeMetrics(metricsPlugin.api);
+    }
+  }
+
+  private initializeMetrics(api: IObsidianMetricsAPI) {
+    this.metricsApi = api;
+
+    // Metric creation is idempotent - safe to call multiple times
+    this.myGauge = api.createGauge({
+      name: 'my_document_size_bytes',
+      help: 'Size of documents in bytes',
+      labelNames: ['document']
+    });
+  }
+
+  updateDocumentSize(doc: string, bytes: number) {
+    this.myGauge?.labels({ document: doc }).set(bytes);
+  }
+}
 ```
 
-#### Creating Metrics
+#### Key Points
 
-##### Counter (values that only increase)
+- **Do NOT cache the API or metrics long-term** - they become stale if obsidian-metrics reloads
+- Listen for `obsidian-metrics:ready` and re-initialize your metrics each time it fires
+- Metric creation is idempotent: calling `createGauge()` with the same name returns the existing metric
+- All metrics automatically include `vault_name` and `vault_id` labels
+
+### Creating Metrics
+
+#### Counter (values that only increase)
 ```typescript
-const pageViewCounter = metricsAPI.createCounter({
-    name: 'page_views_total',
-    help: 'Total number of page views',
-    labelNames: ['page_type', 'source']
+const pageViewCounter = api.createCounter({
+  name: 'page_views_total',
+  help: 'Total number of page views',
+  labelNames: ['page_type', 'source']
 });
 
 // Increment
 pageViewCounter.inc();
 pageViewCounter.inc(5);
 pageViewCounter.inc(1, { page_type: 'note', source: 'search' });
+
+// Or use fluent labels() API
+pageViewCounter.labels({ page_type: 'note', source: 'search' }).inc();
 ```
 
-##### Gauge (values that can go up and down)
+#### Gauge (values that can go up and down)
 ```typescript
-const activeNotesGauge = metricsAPI.createGauge({
-    name: 'active_notes_count',
-    help: 'Number of currently active notes'
+const activeNotesGauge = api.createGauge({
+  name: 'active_notes_count',
+  help: 'Number of currently active notes'
 });
 
 // Set value
 activeNotesGauge.set(42);
 activeNotesGauge.inc();
 activeNotesGauge.dec(5);
+
+// With labels
+activeNotesGauge.labels({ workspace: 'main' }).set(10);
 ```
 
-##### Histogram (distribution of values in buckets)
+#### Histogram (distribution of values in buckets)
 ```typescript
-const loadTimeHistogram = metricsAPI.createHistogram({
-    name: 'page_load_duration_seconds',
-    help: 'Page load duration in seconds',
-    buckets: [0.1, 0.5, 1, 2, 5]
+const loadTimeHistogram = api.createHistogram({
+  name: 'page_load_duration_seconds',
+  help: 'Page load duration in seconds',
+  buckets: [0.1, 0.5, 1, 2, 5]
 });
 
 // Observe values
@@ -112,245 +151,116 @@ const timer = loadTimeHistogram.startTimer();
 timer(); // Automatically observes the duration
 ```
 
-##### Summary (quantiles over sliding time window)
+#### Summary (quantiles over sliding time window)
 ```typescript
-const responseSummary = metricsAPI.createSummary({
-    name: 'api_response_duration_seconds',
-    help: 'API response duration in seconds',
-    percentiles: [0.5, 0.9, 0.95, 0.99]
+const responseSummary = api.createSummary({
+  name: 'api_response_duration_seconds',
+  help: 'API response duration in seconds',
+  percentiles: [0.5, 0.9, 0.95, 0.99]
 });
 
-// Observe values
 responseSummary.observe(0.234);
 ```
 
-#### Convenience Methods
+### Convenience Methods
 
 ```typescript
 // Quick counter creation
-const counter = metricsAPI.counter('button_clicks', 'Button click count', 1);
+const counter = api.counter('button_clicks', 'Button click count', 1);
 
-// Quick gauge creation  
-const gauge = metricsAPI.gauge('memory_usage', 'Memory usage in bytes', 1024);
+// Quick gauge creation
+const gauge = api.gauge('memory_usage', 'Memory usage in bytes', 1024);
 
 // Quick histogram creation
-const hist = metricsAPI.histogram('request_duration', 'Request duration');
+const hist = api.histogram('request_duration', 'Request duration');
 ```
 
-#### Measuring Function Execution
+### Measuring Function Execution
 
 ```typescript
 // Measure async functions
-const result = await metricsAPI.measureAsync('async_operation_duration', async () => {
-    // Your async operation here
-    return await someAsyncOperation();
+const result = await api.measureAsync('async_operation_duration', async () => {
+  return await someAsyncOperation();
 });
 
 // Measure sync functions
-const result = metricsAPI.measureSync('sync_operation_duration', () => {
-    // Your sync operation here
-    return someCalculation();
+const result = api.measureSync('sync_operation_duration', () => {
+  return someCalculation();
 });
 
 // Manual timing
-const timer = metricsAPI.createTimer('custom_operation_duration');
+const timer = api.createTimer('custom_operation_duration');
 // ... do work ...
 const durationMs = timer(); // Returns duration in milliseconds
 ```
 
-#### Retrieving Metrics
+## Configuration
 
-```typescript
-// Get a specific metric
-const metric = metricsAPI.getMetric('page_views_total');
-metric.inc();
+Access plugin settings through **Settings -> Community Plugins -> Obsidian Metrics**
 
-// Get all metrics in Prometheus format
-const allMetrics = metricsAPI.getAllMetrics();
-console.log(allMetrics);
-
-// Clear metrics
-metricsAPI.clearMetric('page_views_total');
-metricsAPI.clearAllMetrics(); // Clears all custom metrics
-```
-
-### Configuration
-
-Access plugin settings through:
-**Settings → Community Plugins → Obsidian Metrics**
-
-#### Server Configuration
+### Server Configuration
 - **Enable Metrics Server**: Toggle the Prometheus server on/off
 - **Server Port**: Configure the port (default: 9090)
 - **Metrics Endpoint Path**: Configure the metrics endpoint (default: /metrics)
 
-#### Metrics Configuration
-- **Enable Built-in Metrics**: Collect real Obsidian usage metrics (file operations, vault stats, performance)
-- **Custom Metrics Prefix**: Prefix for custom metrics (default: obsidian_)
+### Metrics Configuration
+- **Enable Built-in Metrics**: Collect real Obsidian usage metrics
+- **Custom Metrics Prefix**: Prefix for custom metrics (default: `obsidian_`)
 
-### Built-in Metrics
+## Built-in Metrics
 
-When enabled, the plugin automatically collects real Obsidian performance data:
+When enabled, the plugin automatically collects:
 
-#### File Operations
-- `obsidian_file_operations_total`: Real-time file operations (create, delete, modify, rename, open) with labels for operation type and file extension
+### File Operations
+- `obsidian_file_operations_total`: File operations with `operation` and `file_type` labels
 
-#### Vault Statistics  
-- `obsidian_vault_files_total`: Total number of files in the vault
-- `obsidian_vault_notes_total`: Total number of markdown notes
-- `obsidian_vault_size_bytes`: Total size of all vault files in bytes
+### Vault Statistics
+- `obsidian_vault_files_total`: Total files in vault
+- `obsidian_vault_notes_total`: Total markdown notes
+- `obsidian_vault_size_bytes`: Total vault size
 
-#### Application State
-- `obsidian_active_notes_count`: Number of currently open notes/tabs
-- `obsidian_plugins_enabled_total`: Number of enabled plugins
-- `obsidian_browser_memory_usage_bytes`: Browser memory usage (if available)
+### Application State
+- `obsidian_active_notes_count`: Open notes/tabs
+- `obsidian_plugins_enabled_total`: Enabled plugins
+- `obsidian_browser_memory_usage_bytes`: Browser memory usage
 
-#### Performance Metrics
-- `obsidian_note_view_duration_seconds`: Time spent viewing individual notes (histogram)
-- `obsidian_app_performance_timing_seconds`: Various app operation timings (histogram with operation labels)
+### Performance
+- `obsidian_note_view_duration_seconds`: Time viewing notes (histogram)
+- `obsidian_app_performance_timing_seconds`: App operation timings (histogram)
 
-All metrics update in real-time as you use Obsidian, providing genuine insights into your usage patterns and vault statistics.
+All metrics include `vault_name` and `vault_id` labels automatically.
 
-### Commands
+## Endpoints
 
-The plugin provides several commands accessible via Command Palette:
-
-- **Toggle Metrics Server**: Start/stop the metrics server
-- **Show Current Metrics**: Display current metrics in a modal
-- **Clear All Custom Metrics**: Remove all custom metrics
-
-### Endpoints
-
-#### Metrics Endpoint
-- **URL**: `http://localhost:9090/metrics` (configurable)
+### Metrics Endpoint
+- **URL**: `http://localhost:9090/metrics`
 - **Format**: Prometheus text format
-- **Content-Type**: `text/plain`
 
-#### Health Check Endpoint
+### Health Check
 - **URL**: `http://localhost:9090/health`
-- **Format**: JSON
-- **Response**:
-  ```json
-  {
-    "status": "ok",
-    "timestamp": "2024-01-15T10:30:00.000Z",
-    "metrics_endpoint": "/metrics"
-  }
-  ```
+- **Response**: `{ "status": "ok", "timestamp": "...", "metrics_endpoint": "/metrics" }`
 
-## Integration Examples
-
-### Tracking Note Operations
-
-```typescript
-const api = (window as any).ObsidianMetrics;
-
-// Create metrics
-const noteOperations = api.createCounter({
-    name: 'note_operations_total',
-    help: 'Total note operations',
-    labelNames: ['operation', 'file_extension']
-});
-
-const noteLoadTime = api.createHistogram({
-    name: 'note_load_duration_seconds',
-    help: 'Note loading duration'
-});
-
-// Track operations
-this.app.workspace.on('file-open', (file) => {
-    if (file) {
-        const timer = noteLoadTime.startTimer();
-        noteOperations.inc(1, { 
-            operation: 'open', 
-            file_extension: file.extension 
-        });
-        // Timer will be stopped automatically when the histogram observes
-        setTimeout(() => timer(), 100); // Simulate load time
-    }
-});
-```
-
-### Plugin Performance Monitoring
-
-```typescript
-class MyPlugin extends Plugin {
-    async onload() {
-        const api = (window as any).ObsidianMetrics;
-        
-        // Track plugin initialization
-        const initTimer = api.createTimer('my_plugin_init_duration');
-        
-        // ... plugin initialization code ...
-        
-        const initTime = initTimer();
-        console.log(`Plugin initialized in ${initTime}ms`);
-        
-        // Track command execution
-        this.addCommand({
-            id: 'my-command',
-            name: 'My Command',
-            callback: () => {
-                api.measureSync('my_command_duration', () => {
-                    // Command implementation
-                    this.doSomething();
-                });
-            }
-        });
-    }
-}
-```
-
-## Troubleshooting
-
-### Server Won't Start
-- Check if port is already in use
-- Verify port number is valid (1-65535)
-- Check Obsidian console for error messages
-
-### Metrics Not Appearing
-- Ensure server is running (check status bar)
-- Verify metrics endpoint URL
-- Check that metrics are being created correctly
-
-### API Not Available
-- Ensure plugin is enabled
-- Check browser console for errors
-- Verify `window.ObsidianMetrics` is defined
-
-## Development
-
-### Project Structure
+## Project Structure
 
 ```
 obsidian-metrics/
-├── main.ts              # Main plugin file
-├── metrics-manager.ts   # Core metrics management
-├── metrics-api.ts       # Public TypeScript API
-├── types.ts            # TypeScript type definitions
-├── manifest.json       # Plugin manifest
-├── package.json        # Dependencies and scripts
-└── README.md          # Documentation
+├── main.ts                  # Main plugin file
+├── metrics-manager.ts       # Core metrics management
+├── metrics-api.ts           # Public API implementation
+├── types.ts                 # Internal type definitions
+├── obsidian-metrics.d.ts    # Public type declarations (copy to your plugin)
+├── manifest.json            # Plugin manifest
+└── package.json             # Dependencies
 ```
 
-### Building
+## Development
 
 ```bash
+npm install      # Install dependencies
 npm run build    # Production build
 npm run dev      # Development with watch mode
 ```
 
-### API Documentation
-
-The plugin exposes these main interfaces:
-
-- `ObsidianMetricsAPI`: Main public interface
-- `MetricsManager`: Core metrics management
-- `MetricInstance`: Individual metric interface
-- `MetricsRegistry`: Registry interface
-
-See `types.ts` for complete type definitions.
-
 ## License
 
-MIT License - see LICENSE file for details.
+MIT License

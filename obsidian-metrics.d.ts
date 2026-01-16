@@ -1,18 +1,64 @@
 /**
  * Type declarations for the Obsidian Metrics API
  *
- * Copy this file into your plugin to get type-safe access to window.ObsidianMetrics
+ * Copy this file into your plugin to get type-safe access to the metrics API.
  *
- * @example
- * const metrics = window.ObsidianMetrics;
- * if (metrics) {
- *   const gauge = metrics.createGauge({
- *     name: 'my_metric',
- *     help: 'My metric description',
- *     labelNames: ['document']
- *   });
- *   gauge.labels({ document: 'note.md' }).set(42);
+ * ## Accessing the API
+ *
+ * Access via the plugin instance:
+ * ```typescript
+ * const metricsPlugin = this.app.plugins.plugins['obsidian-metrics'] as ObsidianMetricsPlugin | undefined;
+ * const api = metricsPlugin?.api;
+ * ```
+ *
+ * ## Handling Plugin Load Order
+ *
+ * The metrics plugin emits 'obsidian-metrics:ready' when loaded. Listen for this
+ * event to handle cases where your plugin loads before obsidian-metrics:
+ *
+ * ```typescript
+ * class MyPlugin extends Plugin {
+ *   private metricsApi: IObsidianMetricsAPI | undefined;
+ *   private documentGauge: MetricInstance | undefined;
+ *
+ *   async onload() {
+ *     // Listen for metrics API becoming available (or re-initializing after reload)
+ *     this.registerEvent(
+ *       this.app.workspace.on('obsidian-metrics:ready', (api: IObsidianMetricsAPI) => {
+ *         this.initializeMetrics(api);
+ *       })
+ *     );
+ *
+ *     // Also try to get it immediately in case metrics plugin loaded first
+ *     const metricsPlugin = this.app.plugins.plugins['obsidian-metrics'] as ObsidianMetricsPlugin | undefined;
+ *     if (metricsPlugin?.api) {
+ *       this.initializeMetrics(metricsPlugin.api);
+ *     }
+ *   }
+ *
+ *   private initializeMetrics(api: IObsidianMetricsAPI) {
+ *     this.metricsApi = api;
+ *     // Metric creation is idempotent - safe to call multiple times
+ *     this.documentGauge = api.createGauge({
+ *       name: 'my_document_size_bytes',
+ *       help: 'Size of documents in bytes',
+ *       labelNames: ['document']
+ *     });
+ *   }
+ *
+ *   updateDocumentSize(doc: string, bytes: number) {
+ *     this.documentGauge?.labels({ document: doc }).set(bytes);
+ *   }
  * }
+ * ```
+ *
+ * ## Key Points
+ *
+ * - **Do NOT cache the API or metrics long-term** - they become stale if obsidian-metrics reloads
+ * - Listen for 'obsidian-metrics:ready' and re-initialize your metrics each time it fires
+ * - Metric creation is idempotent: calling createGauge() with the same name returns the existing metric
+ * - It's safe to store metric references within an initialization cycle, but always re-create them
+ *   when 'obsidian-metrics:ready' fires
  */
 
 export interface MetricLabels {
@@ -71,7 +117,7 @@ export interface IObsidianMetricsAPI {
 	clearMetric(name: string): boolean;
 	clearAllMetrics(): void;
 
-	// Metric creation
+	// Metric creation (idempotent - returns existing metric if name matches)
 	createCounter(options: CounterOptions): MetricInstance;
 	createGauge(options: GaugeOptions): MetricInstance;
 	createHistogram(options: HistogramOptions): MetricInstance;
@@ -89,8 +135,15 @@ export interface IObsidianMetricsAPI {
 	measureSync<T>(metricName: string, fn: () => T): T;
 }
 
-declare global {
-	interface Window {
-		ObsidianMetrics?: IObsidianMetricsAPI;
+/** Type for the obsidian-metrics plugin instance */
+export interface ObsidianMetricsPlugin {
+	api: IObsidianMetricsAPI;
+}
+
+/** Augment Obsidian's workspace events to include our custom event */
+declare module 'obsidian' {
+	interface Workspace {
+		on(name: 'obsidian-metrics:ready', callback: (api: IObsidianMetricsAPI) => void): EventRef;
+		trigger(name: 'obsidian-metrics:ready', api: IObsidianMetricsAPI): void;
 	}
 }

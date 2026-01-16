@@ -21,12 +21,21 @@ export default class ObsidianMetricsPlugin extends Plugin {
 	private metricsAPI: ObsidianMetricsAPI;
 	public server: http.Server | null = null;
 
+	/** Public API for other plugins. Access via app.plugins.plugins['obsidian-metrics'].api */
+	public api: ObsidianMetricsAPI;
+
 	async onload() {
 		await this.loadSettings();
 
 		// Initialize metrics manager and API
 		this.metricsManager = new MetricsManager(this.settings.customMetricsPrefix);
 		this.metricsAPI = initializeMetricsAPI(this.metricsManager);
+
+		// Set default labels for all metrics (vault identification)
+		this.metricsManager.setDefaultLabels({
+			vault_name: this.app.vault.getName(),
+			vault_id: (this.app as any).appId
+		});
 
 		// Set up HTTP server for metrics endpoint
 		this.setupMetricsServer();
@@ -90,19 +99,23 @@ export default class ObsidianMetricsPlugin extends Plugin {
 			this.setupBuiltInMetrics();
 		}
 
-		// Global exposure for other plugins
-		(window as any).ObsidianMetrics = this.metricsAPI;
+		// Expose API for other plugins
+		this.api = this.metricsAPI;
+
+		// Emit event so other plugins can initialize their metrics
+		// Consumers can listen with: this.registerEvent(this.app.workspace.on('obsidian-metrics:ready', (api) => { ... }))
+		this.app.workspace.trigger('obsidian-metrics:ready', this.api);
+
+		// Also emit on layout ready for plugins that load before us
+		this.app.workspace.onLayoutReady(() => {
+			this.app.workspace.trigger('obsidian-metrics:ready', this.api);
+		});
 
 		new Notice('Obsidian Metrics plugin loaded');
 	}
 
 	async onunload() {
 		await this.stopMetricsServer();
-		
-		// Clean up global exposure
-		if ((window as any).ObsidianMetrics) {
-			delete (window as any).ObsidianMetrics;
-		}
 	}
 
 	private setupMetricsServer() {
@@ -404,11 +417,6 @@ export default class ObsidianMetricsPlugin extends Plugin {
 			await this.stopMetricsServer();
 			await this.startMetricsServer();
 		}
-	}
-
-	// Public API for other plugins
-	public getMetricsAPI(): ObsidianMetricsAPI {
-		return this.metricsAPI;
 	}
 }
 

@@ -25,9 +25,10 @@ export class MetricsManager implements MetricsRegistry {
 
 	createCounter(options: CounterOptions): MetricInstance {
 		const name = this.prefix + options.name;
-		
+
+		// Idempotent: return existing metric if it exists
 		if (this.metrics.has(name)) {
-			throw new Error(`Metric ${name} already exists`);
+			return this.getMetric(name)!;
 		}
 
 		const counter = new client.Counter({
@@ -66,9 +67,10 @@ export class MetricsManager implements MetricsRegistry {
 
 	createGauge(options: GaugeOptions): MetricInstance {
 		const name = this.prefix + options.name;
-		
+
+		// Idempotent: return existing metric if it exists
 		if (this.metrics.has(name)) {
-			throw new Error(`Metric ${name} already exists`);
+			return this.getMetric(name)!;
 		}
 
 		const gauge = new client.Gauge({
@@ -119,9 +121,10 @@ export class MetricsManager implements MetricsRegistry {
 
 	createHistogram(options: HistogramOptions): MetricInstance {
 		const name = this.prefix + options.name;
-		
+
+		// Idempotent: return existing metric if it exists
 		if (this.metrics.has(name)) {
-			throw new Error(`Metric ${name} already exists`);
+			return this.getMetric(name)!;
 		}
 
 		const histogram = new client.Histogram({
@@ -167,9 +170,10 @@ export class MetricsManager implements MetricsRegistry {
 
 	createSummary(options: SummaryOptions): MetricInstance {
 		const name = this.prefix + options.name;
-		
+
+		// Idempotent: return existing metric if it exists
 		if (this.metrics.has(name)) {
-			throw new Error(`Metric ${name} already exists`);
+			return this.getMetric(name)!;
 		}
 
 		const summary = new client.Summary({
@@ -385,5 +389,9 @@ export class MetricsManager implements MetricsRegistry {
 
 	getRegistry(): client.Registry {
 		return this.registry;
+	}
+
+	setDefaultLabels(labels: Record<string, string>): void {
+		this.registry.setDefaultLabels(labels);
 	}
 }
